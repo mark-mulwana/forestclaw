@@ -7,6 +7,236 @@ Plot using Clawpack's visclaw graphics.  This file can be run as ;
 To learn more about visclaw graphics, see www.clawpack.org
     
 """ 
+import numpy as np
+import os
+shift = [1, 1, 0]
+
+
+#Path to setprob.data file
+file_path = os.path.dirname(__file__)
+setprob_data_path = os.path.join(file_path, 'setprob.data')
+
+
+# Read the file and extract values
+with open(setprob_data_path, 'r') as file:
+    lines = file.readlines()
+    example = int(lines[0].split()[0])    
+    alpha = float(lines[1].split()[0])    
+    center_x = float(lines[2].split()[0]) 
+    center_y = float(lines[3].split()[0]) 
+
+center=np.array([center_x,center_y])
+
+
+def set_blocknumber(current_data):
+    global blocknumber
+    blocknumber = current_data.patch.block_number
+    return current_data.q[0,:,:]
+
+def mapc2p_bilinear(xc, yc, center):
+
+    # Initialize the quad array
+    quad = np.zeros((2, 2, 2))
+    quad[0, 0, :] = [0, 0]
+    quad[1, 0, :] = [1, 0]
+    quad[0, 1, :] = [0, 1]
+    quad[1, 1, :] = [1, 1]
+    
+    # Set 's' based on block number
+    if blocknumber == 0:
+        s = np.array([-1, -1])  
+    elif blocknumber == 1:
+        s = np.array([0, -1])       
+    elif blocknumber == 2:
+        s = np.array([-1, 0])           
+    elif blocknumber == 3:
+        s = np.array([0, 0])             
+    else:
+        raise ValueError("Invalid block number")
+
+    # Apply s to the quad coordinates
+    for i in range(2):
+        for j in range(2):
+            quad[i, j, 0] += s[0]
+            quad[i, j, 1] += s[1]
+
+    # Adjust quad based on block number and center should be an array
+    if blocknumber == 0:
+        quad[1, 1, :] = center
+    elif blocknumber == 1:
+        quad[0, 1, :] = center
+    elif blocknumber == 2:
+        quad[1, 0, :] = center
+    elif blocknumber == 3:
+        quad[0, 0, :] = center
+    else:
+        raise ValueError("Invalid block number")
+
+    # Initialize xp,yp and zp arrays
+    xp = np.zeros_like(xc)
+    yp = np.zeros_like(yc)
+    zp = np.zeros_like(xc)  
+    m, n = xc.shape
+
+    # Compute xp and yp basing on the bilinear transformation
+    for i in range(m):
+        for j in range(n):
+            a00 = np.zeros(2)
+            a01 = np.zeros(2)
+            a10 = np.zeros(2)
+            a11 = np.zeros(2)
+
+            for k in range(2):
+                a00[k] = quad[0, 0, k]  
+                a01[k] = (quad[1, 0, k] - quad[0, 0, k])  
+                a10[k] = quad[0, 1, k] - quad[0, 0, k]  
+                a11[k] = (quad[1, 1, k] - quad[1, 0, k] - quad[0, 1, k] + quad[0, 0, k]) 
+        
+
+        
+            xp[i, j] = a00[0] + a01[0] * xc[i, j] + a10[0] * yc[i, j] + a11[0] * xc[i, j] * yc[i, j]
+            yp[i, j] = a00[1] + a01[1] * xc[i, j] + a10[1] * yc[i, j] + a11[1] * xc[i, j] * yc[i, j]
+
+    return xp, yp, zp
+
+def mapc2p_brick(xc, yc):
+    """
+    Maps (xc, yc) coordinates to brick coordinates
+
+    Parameters:
+    xc : numpy array
+        X-coordinates in the range [0,1].
+    yc : numpy array
+        Y-coordinates in the range [0,1].
+
+    Returns:
+    xp : numpy array
+        Mapped X-coordinates.
+    yp : numpy array
+        Mapped Y-coordinates.
+    zp : numpy array
+        Z-coordinates (zeros).
+    """
+    xc = 1  * xc 
+    yc = 1 * yc 
+
+    # Path to brick.dat file
+    file_dir = os.path.dirname(__file__)
+    brick_dat_path = os.path.join(file_dir, 'brick.dat')
+
+    # Load brick data
+    brick_data = np.loadtxt(brick_dat_path )
+    mi, mj = int(brick_data[0, 0]), int(brick_data[0, 1])
+    xv, yv = brick_data[1:, 0], brick_data[1:, 1]
+    
+    xp = (xv[blocknumber] + xc) / mi
+    yp = (yv[blocknumber] + yc) / mj
+    zp = np.zeros_like(xp)
+
+    return xp, yp, zp
+
+def mapc2p_cart(xc, yc):
+    xp = 2 * xc - 1
+    yp = 2 * yc - 1
+    zp = np.zeros_like(xp)  
+    return xp, yp, zp
+
+import numpy as np
+
+def mapc2p_fivepatch(xc, yc, alpha):
+    m, n = xc.shape
+     
+    if blocknumber == 2:
+        xp = (2 * xc - 1)*(alpha)
+        yp = (2 * yc - 1)*(alpha)
+    else:
+        if blocknumber == 0:
+            xc1 = xc
+            yc1 = 1-yc
+            xp, yp = bilinear_help(alpha, xc1.flatten(), yc1.flatten())
+            yp = -yp
+        elif blocknumber == 1:
+            xc1 = yc
+            yc1 = 1-xc
+            yp, xp = bilinear_help(alpha, xc1.flatten(), yc1.flatten())
+            xp = -xp
+        elif blocknumber == 3:
+            xc1 = yc
+            yc1 = xc
+            yp, xp = bilinear_help(alpha, xc1.flatten(), yc1.flatten())
+        elif blocknumber == 4:
+            xc1 = xc
+            yc1 = yc
+            xp, yp = bilinear_help(alpha, xc1.flatten(), yc1.flatten())
+        else:
+            raise ValueError(f"blockno = {blocknumber} is not valid.")
+    
+    xp = xp.reshape(m,n)
+    yp = yp.reshape(m,n)
+    zp = np.zeros_like(xp)
+
+    
+    return xp, yp, zp
+
+def bilinear_help(alpha, xi, eta):
+    
+    xpc = [-alpha, -1, 1, alpha]
+    ypc = [alpha, 1, 1, alpha]
+    
+
+
+    a = np.array([xpc[0], ypc[0]])
+    u1 = np.array([xpc[3] - xpc[0], ypc[3] - ypc[0]])
+    v1 = np.array([xpc[1] - xpc[0], ypc[1] - ypc[0]])
+    v2 = np.array([xpc[2] - xpc[3], ypc[2] - ypc[3]])
+
+    xb=np.zeros_like(xi)
+    yb=np.zeros_like(eta)
+
+    xb = a[0] + u1[0] * xi + v1[0] * eta + (v2[0] - v1[0]) * xi * eta
+    yb = a[1] + u1[1] * xi + v1[1] * eta + (v2[1] - v1[1]) * xi * eta
+
+    return xb, yb
+
+
+
+def mapc2p(xc, yc):
+    
+    # Determine the type of mapping  basing on the example parameter (fclaw_options.ini file)
+    if example == 1:
+        map_type = 'cart'
+    elif example == 2:
+        map_type = 'fivepatch'
+    elif example == 3:
+        map_type = 'bilinear'
+    
+    # Perform mapping based on the map type
+    if map_type == 'cart':
+        xc1, yc1, _ = mapc2p_brick(xc, yc)
+        xp, yp, _ = mapc2p_cart(xc1, yc1)
+        
+        xp += shift[0]
+        yp += shift[1]
+
+    elif map_type == 'fivepatch':
+        xp, yp,_= mapc2p_fivepatch(xc, yc, alpha)
+        
+        xp += shift[0]
+        yp += shift[1]
+
+    elif map_type == 'bilinear':
+        xp, yp, _ = mapc2p_bilinear(xc, yc, center)
+        
+        xp += shift[0]
+        yp += shift[1]
+    else:
+        raise ValueError("Invalid Mapping")
+
+    # Set zp to be zero with the same shape as xp
+    zp = np.zeros_like(xp)
+    
+    return xp, yp
+
 
 
 #--------------------------
@@ -41,54 +271,19 @@ def setplot(plotdata):
     plotaxes.scaled = True
 
     # Set up for item on these axes:
-    plotitem = plotaxes.new_plotitem(plot_type='2d_imshow')
-    plotitem.plot_var = 0
-    plotitem.imshow_cmap = colormaps.yellow_red_blue
-    plotitem.imshow_cmin = 0.0
-    plotitem.imshow_cmax = 1.0
+    plotitem = plotaxes.new_plotitem(plot_type='2d_pcolor')
+    plotitem.plot_var = set_blocknumber
+    plotitem.pcolor_cmap = colormaps.yellow_red_blue
+    plotitem.MappedGrid = True
+    plotitem.mapc2p = mapc2p
+    plotitem.pcolor_cmin = 0.0
+    plotitem.pcolor_cmax = 1.0
     plotitem.add_colorbar = True
-    plotitem.amr_celledges_show = [True, True, False]
-    plotitem.amr_patchedges_show = [True, True]
+    plotitem.amr_celledges_show = [False,False,False,False,False,False]
+    plotitem.amr_patchedges_show = [True,True,True,True,False,False]
     plotitem.show = True       # show on plot?
     
-    # ------------------------------------------------------------
-    # Figure for tikz plots (use KML plotting for now)
-    # ------------------------------------------------------------
-
-    # To create publication quality graphics with AMR mesh lines : 
-    # Run code with following options, set in fclaw_options.ini
-    #   -- Set --tikz-out=T
-    #   -- Set --tikz-figsize
-    #   -- set --tikz-plot-prefix and --tikz-plot-suffix
-    #    
-    # Running the code will create a series of files tikz_XXXX.tex, which will include 
-    # graphics files <prefix>_XXXX.<suffix>.  
-    #
-    # Run file plot_swirl.py to create <plotdir>/_GoogleEearth.kmz
-    # To extract frame N, use 'unzip' (or something equivalent)
-    #
-    # Example : 
-    # In fclaw_options.ini
-    #     [Options]
-    #        --tikz-out = T
-    #        --tikz-figsize = 4 4    # in inches
-    #        --tikz-plot-prefix = 'plot'
-    #        --tikz-plot-suffix = 'png'
-    #
-    # Running the code will produce files 'tikz_XXXX.tex', which will 
-    # include a file plot_XXXX.png
-    #
-    # Run plot_swirl.py to create <plotdir>/_GoogleEarth.kmz.  Extract frames from 
-    # this file 
-    # 
-    # Example : Extract frame0004fig2.png
-    # 
-    #   % unzip _plots/_GoogleEarth.kmz fig2/frame0004fig2/frame0004fig2.png
-    #   % cp fig2/frame0004fig2/frame0004fig2.png plot_0004.png
-    #   % pdflatex tikz_0004.tex
-    # 
-    # View tikz_0004.pdf in appropriate PDF viewer. 
-    # ------------------------------------------------------------
+   
     plotfigure = plotdata.new_plotfigure(name='filament (tikz)', figno=1)
     plotfigure.use_for_kml = True
     plotfigure.kml_xlimits = [0,2]
@@ -109,19 +304,21 @@ def setplot(plotdata):
     cmap = colormaps.yellow_red_blue  # transparent --> light blue --> dark blue
 
     # Water
-    plotaxes = plotfigure.new_plotaxes('tikz')
-    plotaxes.xlimits = [0,2]
-    plotaxes.ylimits = [0,2]
+    #plotaxes = plotfigure.new_plotaxes('tikz')
+    #plotaxes.xlimits = [0,2]
+    #plotaxes.ylimits = [0,2]
     plotitem = plotaxes.new_plotitem(plot_type='2d_pcolor')
-    plotitem.plot_var = 0   # Plot height field h.    
+    plotitem.plot_var = set_blocknumber   # Plot height field h.    
+    plotitem.MappedGrid = True
+    plotitem.mapc2p = mapc2p
     plotitem.pcolor_cmap = cmap
     plotitem.pcolor_cmin = cmin
     plotitem.pcolor_cmax = cmax
 
-    def kml_colorbar(filename):
-        geoplot.kml_build_colorbar(filename,cmap,cmin,cmax)
+    #def kml_colorbar(filename):
+        #geoplot.kml_build_colorbar(filename,cmap,cmin,cmax)
 
-    plotfigure.kml_colorbar = kml_colorbar
+    #plotfigure.kml_colorbar = kml_colorbar
 
 
     #-----------------------------------------
